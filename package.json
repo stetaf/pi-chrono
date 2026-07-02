@@ -1,0 +1,41 @@
+{
+    "name": "pi-chrono",
+    "version": "0.1.0",
+    "description": "Pi coding agent extension for session rollback. Rewind your conversation and restore file state",
+    "license": "MIT",
+    "author": "stetaf",
+    "type": "module",
+    "main": "src/index.ts",
+    "keywords": [
+        "pi",
+        "pi-coding-agent",
+        "pi-extension",
+        "restore",
+        "rewind",
+        "rollback",
+        "undo",
+        "session",
+        "checkpoint",
+        "snapshot",
+        "journal"
+    ],
+    "scripts": {
+        "test": "node --experimental-strip-types --no-warnings test/smoke.ts",
+        "typecheck": "tsc --noEmit"
+    },
+    "files": [
+        "src/",
+        "README.md",
+        "LICENSE"
+    ],
+    "pi": {
+        "extensions": [
+            "./src/index.ts"
+        ]
+    },
+    "devDependencies": {
+        "@mariozechner/pi-coding-agent": "*",
+        "@types/node": "^22.20.0",
+        "typescript": "^5.9.3"
+    }
+}

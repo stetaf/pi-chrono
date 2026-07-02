@@ -1,0 +1,26 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "skipLibCheck": true,
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
+    "paths": {
+      "@earendil-works/pi-coding-agent": [
+        "C:/laragon/bin/nodejs/node-v22.22.3-win-x64/node_modules/@earendil-works/pi-coding-agent/dist/index.d.ts"
+      ],
+      "@earendil-works/pi-ai": [
+        "C:/laragon/bin/nodejs/node-v22.22.3-win-x64/node_modules/@earendil-works/pi-ai/dist/index.d.ts"
+      ],
+      "@earendil-works/pi-tui": [
+        "C:/laragon/bin/nodejs/node-v22.22.3-win-x64/node_modules/@earendil-works/pi-tui/dist/index.d.ts"
+      ],
+      "typebox": [
+        "C:/laragon/bin/nodejs/node-v22.22.3-win-x64/node_modules/typebox/dist/index.d.ts"
+      ]
+    }
+  },
+  "include": ["src/**/*.ts", "test/**/*.ts"]
+}
