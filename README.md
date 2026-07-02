@@ -19,31 +19,16 @@ Perfect for when you want to undo AI-generated changes without losing your conve
 
 ## Installation
 
-1. Install the extension in your Pi Coding Agent configuration:
+### Using npm
 
 ```bash
-# Add pi-chrono as an extension dependency
-npm install pi-chrono
+pi install npm:pi-chrono
 ```
 
-2. Configure it in your `package.json`:
+### From GitHub
 
-```json
-{
-    "pi": {
-        "extensions": ["./node_modules/pi-chrono/src/index.ts"]
-    }
-}
-```
-
-Or use the direct path if installed locally:
-
-```json
-{
-    "pi": {
-        "extensions": ["./src/index.ts"]
-    }
-}
+```bash
+pi install github.com/stetaf/pi-chrono
 ```
 
 ## Usage
@@ -148,3 +133,7 @@ test/
 ### Commands registered
 
 - `chrono`: List and select rollback points
+
+## License
+
+MIT © stefa
