@@ -17,7 +17,8 @@
         "session",
         "checkpoint",
         "snapshot",
-        "journal"
+        "journal",
+        "pi-package"
     ],
     "scripts": {
         "test": "node --experimental-strip-types --no-warnings test/smoke.ts",
