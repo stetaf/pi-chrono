@@ -53,3 +53,56 @@ export interface FinalizeResult {
 	checkpoint: ChronoCheckpoint | null;
 	journal: Journal | null;
 }
+
+export type ChronoCommand = "rollback" | "status";
+
+export interface ParsedChronoCommand {
+	kind: "command";
+	name: ChronoCommand;
+}
+
+export interface UnknownSubcommandHelp {
+	kind: "help";
+	unknownArgs: string[];
+}
+
+export type ParsedChronoResult = ParsedChronoCommand | UnknownSubcommandHelp | null;
+
+export interface CheckpointStatusItem {
+	entryId: string;
+	timestamp?: number | null;
+	userMessagePreview: string;
+	operationCount: number;
+	journalExists: boolean;
+	journalReadable: boolean;
+	inCurrentBranch: boolean;
+	missingBlobPaths: string[];
+}
+
+export interface StatusReport {
+	lines: string[];
+	hasError: boolean;
+	hasWarning: boolean;
+}
+
+export interface BlobStats {
+	count: number;
+	totalBytes: bigint;
+}
+
+export interface JournalReadResult {
+	journal: Journal | null;
+	corrupt: boolean;
+}
+
+export interface JournalDiskStats {
+	totalFiles: number;
+	readableFiles: number;
+	corruptFiles: number;
+}
+
+export interface PendingStatus {
+	exists: boolean;
+	boundToUserMessage: boolean;
+	fileCount: number;
+}

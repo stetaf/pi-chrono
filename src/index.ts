@@ -11,6 +11,7 @@ import {
 	saveState,
 	loadPendingPre,
 	savePendingPre,
+	PENDING_ENTRY_ID_PREFIX,
 } from "./state.ts";
 import {
 	capturePreManifest,
@@ -18,14 +19,14 @@ import {
 	restoreJournal,
 	gcBlobs,
 } from "./journal.ts";
+import { parseChronoCommand } from "./commands.ts";
+import { buildStatusReport } from "./status.ts";
 import type {
 	SessionPaths,
 	PreManifest,
 	ChronoCheckpoint,
 	Journal,
 } from "./types.ts";
-
-const PENDING_ENTRY_ID_PREFIX = "__chrono_pending__:";
 
 function formatTime(ts: number): string {
 	const d = new Date(ts);
@@ -95,6 +96,24 @@ export default function chronoExtension(pi: ExtensionAPI): void {
 		markCheckpoint(pendingPre);
 	}
 
+	async function finalizePendingPre(ctx: ExtensionContext, p: SessionPaths): Promise<boolean> {
+		if (!pendingPre) return true;
+
+		bindPendingPreToUserEntry(ctx);
+		if (pendingPre.entryId.startsWith(PENDING_ENTRY_ID_PREFIX)) return false;
+
+		try {
+			const result = await finalizeJournal(process.cwd(), p, pendingPre);
+			if (result.checkpoint) {
+				checkpoints.set(result.checkpoint.entryId, result.checkpoint);
+			}
+		} catch {
+			// Best-effort
+		}
+
+		return true;
+	}
+
 	pi.on("session_start", async (_event, ctx: ExtensionContext) => {
 		ensureDirs();
 		const p = paths(ctx);
@@ -117,18 +136,7 @@ export default function chronoExtension(pi: ExtensionAPI): void {
 	pi.on("session_shutdown", async (_event, ctx: ExtensionContext) => {
 		const p = paths(ctx);
 		if (!p) return;
-		bindPendingPreToUserEntry(ctx);
-
-		if (pendingPre && !pendingPre.entryId.startsWith(PENDING_ENTRY_ID_PREFIX)) {
-			try {
-				const result = await finalizeJournal(process.cwd(), p, pendingPre);
-				if (result.checkpoint) {
-					checkpoints.set(result.checkpoint.entryId, result.checkpoint);
-				}
-			} catch {
-				// Best-effort
-			}
-		}
+		await finalizePendingPre(ctx, p);
 
 		saveState(p, { checkpoints: Array.from(checkpoints.values()) });
 	});
@@ -160,17 +168,7 @@ export default function chronoExtension(pi: ExtensionAPI): void {
 	pi.on("turn_end", async (_event, ctx: ExtensionContext) => {
 		const p = paths(ctx);
 		if (!p || !pendingPre) return;
-		bindPendingPreToUserEntry(ctx);
-		if (pendingPre.entryId.startsWith(PENDING_ENTRY_ID_PREFIX)) return;
-
-		try {
-			const result = await finalizeJournal(process.cwd(), p, pendingPre);
-			if (result.checkpoint) {
-				checkpoints.set(result.checkpoint.entryId, result.checkpoint);
-			}
-		} catch {
-			// Best-effort
-		}
+		await finalizePendingPre(ctx, p);
 	});
 
 	pi.on("session_before_fork", async (event, ctx: ExtensionContext): Promise<{ cancel?: boolean; skipConversationRestore?: boolean; } | void> => {
@@ -278,22 +276,57 @@ export default function chronoExtension(pi: ExtensionAPI): void {
 	});
 
 	pi.registerCommand("chrono", {
-		description: "List rollback points and restore the session to before a previous message",
+		description: "Rollback & chrono management. Subcommands: status",
+		getArgumentCompletions: (prefix) => {
+			const subs = [
+				{ value: "status", label: "status - Show chrono health & storage state" },
+			];
+			const filtered = subs.filter((s) => s.value.startsWith(prefix));
+			return filtered.length > 0 ? filtered : null;
+		},
 		handler: async (_args, ctx) => {
 			const p = paths(ctx);
-
-			if (pendingPre && p) {
-				bindPendingPreToUserEntry(ctx);
-				if (pendingPre.entryId.startsWith(PENDING_ENTRY_ID_PREFIX)) return;
-				try {
-					const result = await finalizeJournal(process.cwd(), p, pendingPre);
-					if (result.checkpoint) {
-						checkpoints.set(result.checkpoint.entryId, result.checkpoint);
-					}
-				} catch {
-					// Best-effort
-				}
+			if (!p) {
+				ctx.ui.notify("Cannot determine session paths", "error");
+				return;
 			}
+
+			const tokens = (_args ?? "").trim().split(/\s+/).filter(Boolean);
+			const parsed = parseChronoCommand(tokens);
+
+			if (parsed && parsed.kind === "help") {
+				const helpMsg = [
+					"Commands:",
+					"  /chrono           - list and restore rollback points",
+					"  /chrono status    - show chrono health & storage state",
+				].join("\n");
+				ctx.ui.notify(helpMsg, "info");
+				return;
+			}
+
+			if (parsed && parsed.name === "status") {
+				await finalizePendingPre(ctx, p);
+
+				const branch = ctx.sessionManager.getBranch();
+				const branchIds = new Set(branch.map((e) => e.id));
+				const sessionId = ctx.sessionManager.getSessionId();
+
+				const report = buildStatusReport(
+					sessionId,
+					Array.from(checkpoints.values()),
+					branchIds,
+					p,
+					pendingPre,
+				);
+
+				ctx.ui.notify(
+					report.lines.join("\n"),
+					report.hasError ? "error" : report.hasWarning ? "warning" : "info",
+				);
+				return;
+			}
+
+			if (!(await finalizePendingPre(ctx, p))) return;
 
 			const branch = ctx.sessionManager.getBranch();
 			const branchIds = new Set(branch.map((e) => e.id));
@@ -347,7 +380,7 @@ export default function chronoExtension(pi: ExtensionAPI): void {
 					withSession: async (forkCtx) => {
 						try {
 							forkCtx.ui.notify(
-								`⏱ Rolled back to before "${truncate(selected.userMessage, 50)}"`,
+								`\u23F1 Rolled back to before "${truncate(selected.userMessage, 50)}"`,
 								"info",
 							);
 							forkCtx.ui.setEditorText(selected.userMessage);

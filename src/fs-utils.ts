@@ -25,9 +25,7 @@ export function walk(cwd: string, prefix = ""): WalkEntry[] {
 				const s = statSync(join(cwd, rel));
 				if (s.size > MAX_FILE_SIZE) continue;
 				out.push({ path: rel, mtime: s.mtimeMs, size: s.size });
-			} catch {
-				// file disappeared during walk — skip
-			}
+			} catch { /* skip */ }
 		}
 	}
 	return out;

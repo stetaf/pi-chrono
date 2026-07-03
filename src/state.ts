@@ -3,6 +3,8 @@ import { existsSync, readFileSync, writeFileSync, rmSync } from "node:fs";
 import type { ChronoCheckpoint, PersistedState, PreManifest, SessionPaths } from "./types.ts";
 import { ensureSessionDirs } from "./paths.ts";
 
+export const PENDING_ENTRY_ID_PREFIX = "__chrono_pending__:";
+
 export function loadState(p: SessionPaths): PersistedState {
 	try {
 		if (existsSync(p.stateFile)) {
