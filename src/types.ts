@@ -106,3 +106,31 @@ export interface PendingStatus {
 	boundToUserMessage: boolean;
 	fileCount: number;
 }
+
+export type RollbackPreviewKind = "modified" | "deleted" | "created";
+
+export interface RollbackPreviewOperation {
+	kind: RollbackPreviewKind;
+	path: string;
+}
+
+export interface RollbackPreviewSummary {
+	journalCount: number;
+	totalOperationCount: number;
+	modifiedCount: number;
+	deletedCount: number;
+	createdCount: number;
+	operations: RollbackPreviewOperation[];
+}
+
+export interface RollbackPreviewValidationError {
+	checkpointEntryId?: string;
+	path?: string;
+	message: string;
+}
+
+export interface RollbackPreviewResult {
+	journals: Journal[];
+	summary: RollbackPreviewSummary;
+	errors: RollbackPreviewValidationError[];
+}

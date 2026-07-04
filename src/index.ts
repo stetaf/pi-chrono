@@ -1,5 +1,5 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { existsSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import {
 	ensureDirs,
@@ -21,11 +21,14 @@ import {
 } from "./journal.ts";
 import { parseChronoCommand } from "./commands.ts";
 import { buildStatusReport } from "./status.ts";
+import {
+	buildRollbackPreview,
+	formatRollbackPreview,
+} from "./rollback-preview.ts";
 import type {
 	SessionPaths,
 	PreManifest,
 	ChronoCheckpoint,
-	Journal,
 } from "./types.ts";
 
 function formatTime(ts: number): string {
@@ -202,38 +205,17 @@ export default function chronoExtension(pi: ExtensionAPI): void {
 		if (shouldRestore) {
 			try {
 				const branch = ctx.sessionManager.getBranch();
-				const forkIndex = branch.findIndex((e) => e.id === event.entryId);
-				const journalsToApply: Journal[] = [];
+				const preview = buildRollbackPreview(event.entryId, branch, checkpoints);
+				const journalsToApply = preview.journals;
 
-				if (forkIndex !== -1) {
-					for (let i = forkIndex; i < branch.length; i++) {
-						const cp = checkpoints.get(branch[i].id);
-						if (cp && existsSync(cp.journalPath)) {
-							try {
-								const j = JSON.parse(
-									readFileSync(cp.journalPath, "utf8"),
-								) as Journal;
-								journalsToApply.push(j);
-							} catch {
-								// Skip corrupt journals
-							}
-						}
-					}
-				}
-
-				if (journalsToApply.length === 0 && existsSync(checkpoint.journalPath)) {
-					try {
-						journalsToApply.push(
-							JSON.parse(readFileSync(checkpoint.journalPath, "utf8")),
-						);
-					} catch {
-						// Corrupt
-					}
+				if (preview.errors.length > 0) {
+					ctx.ui.notify(preview.errors[0].message, "error");
+					return { cancel: true };
 				}
 
 				if (journalsToApply.length === 0) {
 					ctx.ui.notify("No valid journals found — cannot restore", "error");
-					return;
+					return { cancel: true };
 				}
 
 				let allOk = true;
@@ -362,14 +344,22 @@ export default function chronoExtension(pi: ExtensionAPI): void {
 			if (idx === -1) return;
 
 			const selected = available[idx];
-
-			ctx.ui.notify(
-				"THIS ACTION WILL RESTORE THE WORKTREE STATUS AND FORK THE SESSION — IT CANNOT BE UNDONE.",
-				"error",
-			);
+			const preview = buildRollbackPreview(selected.entryId, branch, checkpoints);
+			if (preview.errors.length > 0) {
+				ctx.ui.notify(preview.errors[0].message, "error");
+				return;
+			}
+			if (preview.journals.length === 0) {
+				ctx.ui.notify("No valid journals found - cannot restore", "error");
+				return;
+			}
 			const confirmed = await ctx.ui.confirm(
 				"Confirm rollback?",
-				`Roll back to before "${truncate(selected.userMessage, 50)}" and restore ${selected.opCount} file operation(s)?`,
+				[
+					formatRollbackPreview(preview.summary),
+					"",
+					`Restore state before "${truncate(selected.userMessage, 50)}" and apply ${preview.summary.operations.length} file change(s)? This will fork the session. This action cannot be undone.`,
+				].join("\n"),
 			);
 			if (!confirmed) return;
 
@@ -380,7 +370,7 @@ export default function chronoExtension(pi: ExtensionAPI): void {
 					withSession: async (forkCtx) => {
 						try {
 							forkCtx.ui.notify(
-								`\u23F1 Rolled back to before "${truncate(selected.userMessage, 50)}"`,
+								`Rolled back to before "${truncate(selected.userMessage, 50)}"`,
 								"info",
 							);
 							forkCtx.ui.setEditorText(selected.userMessage);

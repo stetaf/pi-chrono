@@ -27,6 +27,14 @@ import {
 	finalizeJournal,
 	gcBlobs,
 } from "../src/journal.ts";
+import {
+	buildRollbackPreview,
+	summarizeRollbackJournals,
+} from "../src/rollback-preview.ts";
+import type {
+	ChronoCheckpoint,
+	Journal,
+} from "../src/types.ts";
 
 let pass = 0;
 let fail = 0;
@@ -536,6 +544,144 @@ async function test14_multiJournalRollback(): Promise<void> {
 	}
 }
 
+async function test15_rollbackPreviewSingleJournal(): Promise<void> {
+	section("15. rollback preview: one journal summary");
+	const journal: Journal = {
+		entryId: "turn-1",
+		userMessage: "test",
+		ts: 1,
+		ops: [
+			{ kind: "modified", path: "a.txt", beforeBlob: "a".repeat(64) },
+			{ kind: "deleted", path: "b.txt", beforeBlob: "b".repeat(64) },
+			{ kind: "created", path: "c.txt" },
+		],
+	};
+
+	const summary = summarizeRollbackJournals([journal]);
+	assert(summary.journalCount === 1, "summary has 1 journal");
+	assert(summary.totalOperationCount === 3, "summary has 3 raw operations");
+	assert(summary.modifiedCount === 1, "modified count is 1");
+	assert(summary.createdCount === 1, "recreated count is 1");
+	assert(summary.deletedCount === 1, "removed count is 1");
+	assert(summary.operations[0].kind === "modified" && summary.operations[0].path === "a.txt", "modified preview is M a.txt");
+	assert(summary.operations[1].kind === "created" && summary.operations[1].path === "b.txt", "deleted journal op previews as recreated");
+	assert(summary.operations[2].kind === "deleted" && summary.operations[2].path === "c.txt", "created journal op previews as removed");
+}
+
+async function test16_rollbackPreviewMultipleJournals(): Promise<void> {
+	section("16. rollback preview: multiple journals preserve restore order");
+	const j1: Journal = {
+		entryId: "turn-1",
+		userMessage: "first",
+		ts: 1,
+		ops: [{ kind: "created", path: "first.txt" }],
+	};
+	const j2: Journal = {
+		entryId: "turn-2",
+		userMessage: "second",
+		ts: 2,
+		ops: [{ kind: "created", path: "second.txt" }],
+	};
+
+	const summary = summarizeRollbackJournals([j1, j2]);
+	assert(summary.journalCount === 2, "summary has 2 journals");
+	assert(summary.totalOperationCount === 2, "summary has 2 raw operations");
+	assert(summary.operations.length === 2, "summary has 2 affected files");
+	assert(summary.operations[0].path === "second.txt", "newer journal appears first");
+	assert(summary.operations[1].path === "first.txt", "older journal appears second");
+}
+
+async function test17_rollbackPreviewDeduplicatesFinalPathEffect(): Promise<void> {
+	section("17. rollback preview: duplicate path handling");
+	const j1: Journal = {
+		entryId: "turn-1",
+		userMessage: "create file",
+		ts: 1,
+		ops: [{ kind: "created", path: "shared.txt" }],
+	};
+	const j2: Journal = {
+		entryId: "turn-2",
+		userMessage: "modify file",
+		ts: 2,
+		ops: [{ kind: "modified", path: "shared.txt", beforeBlob: "2".repeat(64) }],
+	};
+
+	const summary = summarizeRollbackJournals([j1, j2]);
+	assert(summary.totalOperationCount === 2, "duplicate path keeps raw operation count");
+	assert(summary.operations.length === 1, "duplicate path is shown once");
+	assert(summary.operations[0].kind === "deleted", "final preview effect is file removal");
+	assert(summary.deletedCount === 1 && summary.modifiedCount === 0, "deduped counts use final effect");
+}
+
+async function test18_rollbackPreviewMissingBlobDetection(): Promise<void> {
+	section("18. rollback preview: missing blob detection");
+	const sessionId = "preview-missing-blob-" + Date.now();
+	const p = sessionPaths(sessionId);
+	if (existsSync(p.dir)) rmSync(p.dir, { recursive: true, force: true });
+	ensureSessionDirs(p);
+
+	try {
+		const missingSha = "f".repeat(64);
+		const journal: Journal = {
+			entryId: "turn-1",
+			userMessage: "test",
+			ts: 1,
+			ops: [{ kind: "modified", path: "missing.txt", beforeBlob: missingSha }],
+		};
+		const journalPath = join(p.journalsDir, "turn-1.json");
+		writeFileSync(journalPath, JSON.stringify(journal), "utf8");
+		const checkpoint: ChronoCheckpoint = {
+			entryId: "turn-1",
+			journalPath,
+			userMessage: "test",
+			timestamp: 1,
+			opCount: 1,
+		};
+		const preview = buildRollbackPreview(
+			"turn-1",
+			[{ id: "turn-1" }],
+			new Map([["turn-1", checkpoint]]),
+		);
+
+		assert(preview.journals.length === 1, "valid journal is loaded");
+		assert(preview.errors.length === 1, "missing blob is reported");
+		assert(preview.errors[0].path === "missing.txt", "missing blob error includes path");
+	} finally {
+		rmSync(p.dir, { recursive: true, force: true });
+	}
+}
+
+async function test19_rollbackPreviewCorruptJournalHandling(): Promise<void> {
+	section("19. rollback preview: corrupt journal handling");
+	const sessionId = "preview-corrupt-journal-" + Date.now();
+	const p = sessionPaths(sessionId);
+	if (existsSync(p.dir)) rmSync(p.dir, { recursive: true, force: true });
+	ensureSessionDirs(p);
+
+	try {
+		const journalPath = join(p.journalsDir, "turn-1.json");
+		writeFileSync(journalPath, "not json{{", "utf8");
+		const checkpoint: ChronoCheckpoint = {
+			entryId: "turn-1",
+			journalPath,
+			userMessage: "test",
+			timestamp: 1,
+			opCount: 1,
+		};
+		const preview = buildRollbackPreview(
+			"turn-1",
+			[{ id: "turn-1" }],
+			new Map([["turn-1", checkpoint]]),
+		);
+
+		assert(preview.journals.length === 0, "corrupt journal is not loaded");
+		assert(preview.errors.length === 1, "corrupt journal is reported");
+		assert(preview.errors[0].checkpointEntryId === "turn-1", "corrupt journal error includes checkpoint");
+	} finally {
+		rmSync(p.dir, { recursive: true, force: true });
+	}
+}
+
 async function main(): Promise<void> {
 	console.log("\x1b[1m\x1b[36mpi-chrono smoke test\x1b[0m");
 	console.log("\x1b[2m" + "=".repeat(50) + "\x1b[0m");
@@ -561,6 +707,11 @@ async function main(): Promise<void> {
 		test12_restoreCreatesParentDirs,
 		test13_finalizeJournal,
 		test14_multiJournalRollback,
+		test15_rollbackPreviewSingleJournal,
+		test16_rollbackPreviewMultipleJournals,
+		test17_rollbackPreviewDeduplicatesFinalPathEffect,
+		test18_rollbackPreviewMissingBlobDetection,
+		test19_rollbackPreviewCorruptJournalHandling,
 	];
 
 	for (const t of tests) {
