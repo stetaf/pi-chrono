@@ -15,6 +15,9 @@ Perfect for when you want to undo AI-generated changes without losing your conve
 - **Workspace restoration**: Restores files to their exact previous condition
 - **Session forking**: Creates a new branch from any point in your conversation
 - **Journal system**: Tracks file operations (create/modify/delete) with full reversal support
+- **Blob storage**: Content-addressed blob store for before/after file versions
+- **Rollback preview**: Shows exactly which files will change before confirming
+- **Status monitoring**: `/chrono status` for health & storage diagnostics
 - **Garbage collection**: Automatically cleans up obsolete checkpoint data
 
 ## Installation
@@ -43,20 +46,32 @@ pi-chrono works automatically once installed:
 
 No configuration required — it just works.
 
-### Manual rollback
+### Commands
 
-Use the `chrono` command to list and restore checkpoints:
+Use the `/chrono` command with an optional subcommand:
 
 ```
-/chrono
+/chrono            List and restore rollback points
+/chrono status     Show chrono health & storage state
 ```
 
-This will:
+#### Rollback (`/chrono`)
 
-1. Display all available rollback points (with timestamps and message previews)
-2. Let you select which point to restore
-3. Confirm before proceeding
-4. Restore the workspace and fork the session at that point
+Running `/chrono` without arguments will:
+
+- Display all available rollback points (with timestamps and message previews)
+- Let you select which point to restore
+- Confirm before proceeding
+- Restore the workspace and fork the session at that point
+
+#### Status (`/chrono status`)
+
+Running `/chrono status` shows an overview of the chrono system:
+
+- Number of stored checkpoints and their validity
+- Journal disk stats (total / readable / corrupt files)
+- Blob storage size
+- Pending pre-manifest status
 
 ### What happens during rollback?
 
@@ -83,11 +98,14 @@ pi-chrono uses three core mechanisms:
 ### Storage structure
 
 ```
-~/.pi/sessions/<sessionId>/
-├── state.json          # Checkpoint metadata
-├── pending-pre.json    # Current turn's pre-manifest
-└── journals/
-    ├── <entryId>.json  # Journal entries for each turn
+~/.pi/chrono/
+├── blobs/              # Content-addressed blob store (before/after file versions)
+└── sessions/
+    └── <sessionId>/
+        ├── state.json          # Checkpoint metadata
+        ├── pending-pre.json    # Current turn's pre-manifest
+        └── journals/
+            ├── <entryId>.json  # Journal entries for each turn
 ```
 
 ## Development
@@ -111,13 +129,17 @@ npm test
 
 ```
 src/
-├── index.ts      # Extension entry point and command registration
-├── types.ts      # Data structures (Checkpoint, Journal, PreManifest)
-├── journal.ts    # File operation tracking and reversal logic
-├── paths.ts      # Session directory management
-└── state.ts      # Checkpoint persistence (load/save)
+├── index.ts            # Extension entry point, event handlers, command registration
+├── types.ts            # Data structures (Checkpoint, Journal, PreManifest, etc.)
+├── commands.ts         # Chrono command parsing (subcommands: status)
+├── journal.ts          # File operation tracking, reversal, and blob management
+├── paths.ts            # Directory constants, session path resolution, ignore rules
+├── state.ts            # Checkpoint and pending-pre persistence (load/save)
+├── fs-utils.ts         # File system walking, hashing (SHA256), file copy
+├── status.ts           # Status report generation (checkpoint validity, disk stats)
+├── rollback-preview.ts # Rollback preview builder (operations, validation)
 test/
-└── smoke.ts     # Basic functionality tests
+└── smoke.ts           # Basic functionality tests
 ```
 
 ## API Reference
@@ -132,7 +154,8 @@ test/
 
 ### Commands registered
 
-- `chrono`: List and select rollback points
+- `chrono`: List and restore rollback points (default)
+- `chrono status`: Show chrono health & storage state
 
 ## License
 
