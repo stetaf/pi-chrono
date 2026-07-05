@@ -25,6 +25,13 @@ import {
 	buildRollbackPreview,
 	formatRollbackPreview,
 } from "./rollback-preview.ts";
+
+import {
+	buildDiffSummary,
+	formatDiffReport,
+	truncateText,
+	generateContentDiffs,
+} from "./diff.ts";
 import type {
 	SessionPaths,
 	PreManifest,
@@ -38,7 +45,7 @@ function formatTime(ts: number): string {
 
 function truncate(text: string, max = 80): string {
 	if (text.length <= max) return text;
-	return text.slice(0, max - 1) + "…";
+	return text.slice(0, Math.max(0, max - 3)) + "...";
 }
 
 function isUserMessageEntry(entry: unknown): entry is { id: string; type: "message"; message: { role: "user" } } {
@@ -117,6 +124,21 @@ export default function chronoExtension(pi: ExtensionAPI): void {
 		return true;
 	}
 
+	function listAvailableCheckpoints(ctx: ExtensionContext): ChronoCheckpoint[] {
+		const branch = ctx.sessionManager.getBranch();
+		const branchIds = new Set(branch.map((e) => e.id));
+		const available: ChronoCheckpoint[] = [];
+
+		for (const cp of checkpoints.values()) {
+			const entry = ctx.sessionManager.getEntry(cp.entryId);
+			if (branchIds.has(cp.entryId) && existsSync(cp.journalPath) && isUserMessageEntry(entry)) {
+				available.push(cp);
+			}
+		}
+
+		return available.sort((a, b) => b.timestamp - a.timestamp);
+	}
+
 	pi.on("session_start", async (_event, ctx: ExtensionContext) => {
 		ensureDirs();
 		const p = paths(ctx);
@@ -164,7 +186,7 @@ export default function chronoExtension(pi: ExtensionAPI): void {
 			savePendingPre(p, newPre);
 
 		} catch {
-			// Walk failed — skip snapshot for this turn
+			// Walk failed - skip snapshot for this turn
 		}
 	});
 
@@ -214,7 +236,7 @@ export default function chronoExtension(pi: ExtensionAPI): void {
 				}
 
 				if (journalsToApply.length === 0) {
-					ctx.ui.notify("No valid journals found — cannot restore", "error");
+					ctx.ui.notify("No valid journals found - cannot restore", "error");
 					return { cancel: true };
 				}
 
@@ -249,7 +271,7 @@ export default function chronoExtension(pi: ExtensionAPI): void {
 					}
 					return { skipConversationRestore: true };
 				} else {
-					ctx.ui.notify("Failed to restore workspace — check disk state", "error");
+					ctx.ui.notify("Failed to restore workspace - check disk state", "error");
 				}
 			} catch (err) {
 				ctx.ui.notify(`Failed to restore workspace: ${err}`, "error");
@@ -258,10 +280,19 @@ export default function chronoExtension(pi: ExtensionAPI): void {
 	});
 
 	pi.registerCommand("chrono", {
-		description: "Rollback & chrono management. Subcommands: status",
+		description: "Rollback & chrono management. Subcommands: status, diff",
 		getArgumentCompletions: (prefix) => {
+			if (prefix.startsWith("diff ")) {
+				const options = [
+					{ value: "diff --content", label: "diff --content - Include text-level diffs for modified files" },
+					{ value: "diff --full", label: "diff --full - Show all affected paths" },
+				];
+				return options.filter((s) => s.value.startsWith(prefix));
+			}
+
 			const subs = [
 				{ value: "status", label: "status - Show chrono health & storage state" },
+				{ value: "diff", label: "diff [--content] [--full] - Inspect what a checkpoint would roll back" },
 			];
 			const filtered = subs.filter((s) => s.value.startsWith(prefix));
 			return filtered.length > 0 ? filtered : null;
@@ -281,6 +312,10 @@ export default function chronoExtension(pi: ExtensionAPI): void {
 					"Commands:",
 					"  /chrono           - list and restore rollback points",
 					"  /chrono status    - show chrono health & storage state",
+					"  /chrono diff [--content] [--full]",
+					"                    - inspect file-level changes before rollback",
+					"                    --content: include text-level diffs for modified files",
+					"                    --full: show all affected paths",
 				].join("\n");
 				ctx.ui.notify(helpMsg, "info");
 				return;
@@ -308,19 +343,75 @@ export default function chronoExtension(pi: ExtensionAPI): void {
 				return;
 			}
 
+
+			if (parsed && parsed.name === "diff") {
+				if (!(await finalizePendingPre(ctx, p))) return;
+
+				const branch = ctx.sessionManager.getBranch();
+				const available = listAvailableCheckpoints(ctx);
+
+				if (available.length === 0) {
+					ctx.ui.notify("No rollback points available", "info");
+					return;
+				}
+
+				const fullOutput = tokens.includes("--full");
+				const labels = available.map((cp, i) => {
+					const time = formatTime(cp.timestamp);
+					const preview = truncateText(cp.userMessage.replace(/\n/g, " "), 55);
+					return `${String(i + 1).padStart(2, " ")}. [${time}] ${preview} (${cp.opCount} ops)`;
+				});
+
+				const choice = await ctx.ui.select(
+					"Diff against which checkpoint?",
+					labels,
+				);
+
+				if (!choice) return;
+
+				const idx = labels.indexOf(choice);
+				if (idx === -1) return;
+
+				const selected = available[idx];
+				const report = buildDiffSummary(selected, branch, checkpoints);
+
+				if (!report) {
+					ctx.ui.notify("No valid journals found - cannot show diff", "error");
+					return;
+				}
+
+				const output: string[] = [
+					formatDiffReport(report, { maxPaths: fullOutput ? Infinity : undefined }),
+				];
+
+				if (tokens.includes("--content")) {
+					const preview = buildRollbackPreview(selected.entryId, branch, checkpoints);
+					const contentDiffs = generateContentDiffs(report, preview.journals);
+					for (const entry of contentDiffs.slice(0, 3)) {
+						output.push("");
+						output.push(`Diff for ${entry.path} (+${entry.addedLines}/-${entry.removedLines}):`);
+
+						const diffLines = entry.diffText.split("\n");
+						for (const line of diffLines.slice(0, 48)) {
+							output.push(line.trimEnd());
+						}
+						if (diffLines.length > 48) {
+							output.push(`... (${diffLines.length - 48} more lines)`);
+						}
+					}
+				} else if (!fullOutput) {
+					output.push("");
+					output.push("Use /chrono diff --content to also see text-level diffs");
+				}
+
+				ctx.ui.notify(output.join("\n"), "info");
+				return;
+			}
+
 			if (!(await finalizePendingPre(ctx, p))) return;
 
 			const branch = ctx.sessionManager.getBranch();
-			const branchIds = new Set(branch.map((e) => e.id));
-			const available: ChronoCheckpoint[] = [];
-
-			for (const cp of checkpoints.values()) {
-				const entry = ctx.sessionManager.getEntry(cp.entryId);
-				if (branchIds.has(cp.entryId) && existsSync(cp.journalPath) && isUserMessageEntry(entry)) {
-					available.push(cp);
-				}
-			}
-			available.sort((a, b) => b.timestamp - a.timestamp);
+			const available = listAvailableCheckpoints(ctx);
 
 			if (available.length === 0) {
 				ctx.ui.notify("No rollback points available", "info");

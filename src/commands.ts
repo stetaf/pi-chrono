@@ -2,6 +2,7 @@ import type { ChronoCommand, ParsedChronoResult } from "./types.ts";
 
 const SUBCOMMANDS: Record<string, ChronoCommand> = {
 	status: "status",
+	diff: "diff",
 };
 
 export function parseChronoCommand(args?: readonly string[]): ParsedChronoResult {

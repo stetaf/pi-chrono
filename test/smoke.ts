@@ -31,6 +31,11 @@ import {
 	buildRollbackPreview,
 	summarizeRollbackJournals,
 } from "../src/rollback-preview.ts";
+import {
+	buildDiffSummary,
+	formatDiffReport,
+	generateContentDiffs,
+} from "../src/diff.ts";
 import type {
 	ChronoCheckpoint,
 	Journal,
@@ -682,6 +687,120 @@ async function test19_rollbackPreviewCorruptJournalHandling(): Promise<void> {
 	}
 }
 
+async function test20_diffSummaryReportsMissingBlobs(): Promise<void> {
+	section("20. chrono diff: missing blob warning");
+	const cwd = mkdtempSync(join(tmpdir(), "chrono-diff-missing-"));
+	try {
+		const missingSha = "e".repeat(64);
+		const journal: Journal = {
+			entryId: "turn-1",
+			userMessage: "test",
+			ts: 1,
+			ops: [{ kind: "modified", path: "missing.txt", beforeBlob: missingSha }],
+		};
+		const journalPath = join(cwd, "turn-1.json");
+		writeFileSync(journalPath, JSON.stringify(journal), "utf8");
+		const checkpoint: ChronoCheckpoint = {
+			entryId: "turn-1",
+			journalPath,
+			userMessage: "test",
+			timestamp: 1,
+			opCount: 1,
+		};
+
+		const report = buildDiffSummary(
+			checkpoint,
+			[{ id: "turn-1" }],
+			new Map([["turn-1", checkpoint]]),
+		);
+
+		assert(report !== null, "diff report is built");
+		assert(report!.errors.length === 1, "missing blob is reported");
+		assert(report!.errors[0].message.includes("missing.txt"), "missing blob warning includes path");
+	} finally {
+		rmSync(cwd, { recursive: true, force: true });
+	}
+}
+
+async function test21_diffReportUsesRollbackEffectLabels(): Promise<void> {
+	section("21. chrono diff: effect labels");
+	const report = {
+		checkpointEntryId: "turn-1",
+		checkpointTimestamp: 1,
+		userMessagePreview: "test",
+		journalCount: 1,
+		operations: [
+			{ kind: "created", path: "recreate.txt" },
+			{ kind: "deleted", path: "remove.txt" },
+		],
+		modifiedCount: 0,
+		createdCount: 1,
+		deletedCount: 1,
+		totalRawOps: 2,
+		errors: [],
+	} satisfies NonNullable<ReturnType<typeof buildDiffSummary>>;
+
+	const text = formatDiffReport(report, { maxPaths: Infinity });
+	assert(text.includes("Recreate:\n  A recreate.txt"), "created preview is shown as recreate");
+	assert(text.includes("Remove:\n  D remove.txt"), "deleted preview is shown as remove");
+}
+
+async function test22_contentDiffDeduplicatesAndShowsTailDeletion(): Promise<void> {
+	section("22. chrono diff: content diff dedupe and tail deletion");
+	const cwd = mkdtempSync(join(tmpdir(), "chrono-diff-content-"));
+	const oldCwd = process.cwd();
+	const olderSha = "c".repeat(64);
+	const newerSha = "d".repeat(64);
+
+	try {
+		try {
+			writeFileSync(join(BLOBS_DIR, olderSha), "one\ntwo\nremoved\n", "utf8");
+			writeFileSync(join(BLOBS_DIR, newerSha), "newer intermediate\n", "utf8");
+		} catch {
+			console.log("  \x1b[33m!\x1b[0m blob store is not writable - skipping content diff assertion");
+			return;
+		}
+		writeFileSync(join(cwd, "file.txt"), "one\ntwo\n", "utf8");
+		process.chdir(cwd);
+
+		const older: Journal = {
+			entryId: "turn-1",
+			userMessage: "older",
+			ts: 1,
+			ops: [{ kind: "modified", path: "file.txt", beforeBlob: olderSha }],
+		};
+		const newer: Journal = {
+			entryId: "turn-2",
+			userMessage: "newer",
+			ts: 2,
+			ops: [{ kind: "modified", path: "file.txt", beforeBlob: newerSha }],
+		};
+		const report = {
+			checkpointEntryId: "turn-1",
+			checkpointTimestamp: 1,
+			userMessagePreview: "older",
+			journalCount: 2,
+			operations: [{ kind: "modified", path: "file.txt" }],
+			modifiedCount: 1,
+			createdCount: 0,
+			deletedCount: 0,
+			totalRawOps: 2,
+			errors: [],
+		} satisfies NonNullable<ReturnType<typeof buildDiffSummary>>;
+
+		const diffs = generateContentDiffs(report, [older, newer]);
+		assert(diffs.length === 1, "duplicate path produces one content diff");
+		assert(diffs[0].removedLines > 0, "tail deletion is reported");
+		assert(diffs[0].diffText.includes("-removed"), "diff includes removed tail line");
+		assert(!diffs[0].diffText.includes("newer intermediate"), "older effective blob is used");
+	} finally {
+		process.chdir(oldCwd);
+		rmSync(cwd, { recursive: true, force: true });
+		rmSync(join(BLOBS_DIR, olderSha), { force: true });
+		rmSync(join(BLOBS_DIR, newerSha), { force: true });
+	}
+}
+
 async function main(): Promise<void> {
 	console.log("\x1b[1m\x1b[36mpi-chrono smoke test\x1b[0m");
 	console.log("\x1b[2m" + "=".repeat(50) + "\x1b[0m");
@@ -712,6 +831,9 @@ async function main(): Promise<void> {
 		test17_rollbackPreviewDeduplicatesFinalPathEffect,
 		test18_rollbackPreviewMissingBlobDetection,
 		test19_rollbackPreviewCorruptJournalHandling,
+		test20_diffSummaryReportsMissingBlobs,
+		test21_diffReportUsesRollbackEffectLabels,
+		test22_contentDiffDeduplicatesAndShowsTailDeletion,
 	];
 
 	for (const t of tests) {

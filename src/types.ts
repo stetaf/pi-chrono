@@ -54,7 +54,7 @@ export interface FinalizeResult {
 	journal: Journal | null;
 }
 
-export type ChronoCommand = "rollback" | "status";
+export type ChronoCommand = "rollback" | "status" | "diff";
 
 export interface ParsedChronoCommand {
 	kind: "command";
@@ -133,4 +133,28 @@ export interface RollbackPreviewResult {
 	journals: Journal[];
 	summary: RollbackPreviewSummary;
 	errors: RollbackPreviewValidationError[];
+}
+
+export interface DiffSummaryOptions {
+    maxPaths?: number;
+}
+
+export interface DiffFileReport {
+	checkpointEntryId: string;
+	checkpointTimestamp: number;
+	userMessagePreview: string;
+	journalCount: number;
+	operations: RollbackPreviewOperation[];
+	modifiedCount: number;
+	deletedCount: number;
+	createdCount: number;
+	totalRawOps: number;
+	errors: Array<{ message: string }>;
+}
+
+export interface ContentDiffEntry {
+	path: string;
+	addedLines: number;
+	removedLines: number;
+	diffText: string;
 }
