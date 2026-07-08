@@ -1,7 +1,8 @@
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import type { PreManifest, FileMeta, Journal, FsOp, ChronoCheckpoint, FinalizeResult, PersistedState, SessionPaths } from "./types.ts";
+import { buildIgnoreMatcher } from "./ignore.ts";
+import type { PreManifest, FileMeta, Journal, FsOp, FinalizeResult, PersistedState, SessionPaths } from "./types.ts";
 import { BLOBS_DIR, SESSIONS_DIR, sessionPaths, ensureDirs, ensureSessionDirs } from "./paths.ts";
 import { walk, ingestBlob, sha256OfFile } from "./fs-utils.ts";
 
@@ -12,7 +13,8 @@ export async function capturePreManifest(
 	prev: PreManifest | null,
 ): Promise<PreManifest> {
 	ensureDirs();
-	const walked = walk(cwd);
+	const matcher = buildIgnoreMatcher({ rootDir: cwd });
+	const walked = walk(cwd, "", matcher);
 	const files: Record<string, FileMeta> = {};
 
 	await Promise.all(
@@ -40,7 +42,8 @@ export async function capturePreManifest(
 }
 
 export async function buildJournal(cwd: string, pre: PreManifest): Promise<Journal | null> {
-	const post = walk(cwd);
+	const matcher = buildIgnoreMatcher({ rootDir: cwd });
+	const post = walk(cwd, "", matcher);
 	const postMap = new Map(post.map((f) => [f.path, f]));
 	const ops: FsOp[] = [];
 

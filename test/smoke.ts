@@ -8,9 +8,11 @@ import {
 	sessionPaths,
 	ensureDirs,
 	ensureSessionDirs,
-	isIgnored,
 	MAX_FILE_SIZE,
 } from "../src/paths.ts";
+import {
+	isIgnoredName,
+} from "../src/ignore.ts";
 import {
 	loadState,
 	saveState,
@@ -130,9 +132,9 @@ async function test2_ignoreList(): Promise<void> {
 		assert(!("dist" in pre.files), "dist/ skipped");
 		assert(!("app.log" in pre.files), "app.log skipped (suffix)");
 		assert(!("debug.log" in pre.files), "debug.log skipped (suffix)");
-		assert(isIgnored("node_modules"), "isIgnored('node_modules') = true");
-		assert(isIgnored("app.log"), "isIgnored('app.log') = true");
-		assert(!isIgnored("src.ts"), "isIgnored('src.ts') = false");
+		assert(isIgnoredName("node_modules"), "isIgnored('node_modules') = true");
+		assert(isIgnoredName("app.log"), "isIgnored('app.log') = true");
+		assert(!isIgnoredName("src.ts"), "isIgnored('src.ts') = false");
 	} finally {
 		rmSync(cwd, { recursive: true, force: true });
 	}

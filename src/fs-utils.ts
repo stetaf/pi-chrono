@@ -3,10 +3,12 @@ import { createReadStream, createWriteStream, existsSync, readdirSync, statSync,
 import type { Dirent } from "node:fs";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
+import { IgnoreMatcher, buildIgnoreMatcher } from "./ignore.ts";
 import type { WalkEntry } from "./types.ts";
-import { BLOBS_DIR, MAX_FILE_SIZE, isIgnored } from "./paths.ts";
+import { BLOBS_DIR, MAX_FILE_SIZE } from "./paths.ts";
 
-export function walk(cwd: string, prefix = ""): WalkEntry[] {
+export function walk(cwd: string, prefix = "", matcher?: IgnoreMatcher): WalkEntry[] {
+	const m = matcher ?? buildIgnoreMatcher();
 	const out: WalkEntry[] = [];
 	let entries: Dirent[];
 	try {
@@ -15,11 +17,15 @@ export function walk(cwd: string, prefix = ""): WalkEntry[] {
 		return out;
 	}
 	for (const e of entries) {
-		if (isIgnored(e.name)) continue;
 		if (e.isSymbolicLink()) continue;
+
 		const rel = prefix ? `${prefix}/${e.name}` : e.name;
+
+		if (m.isIgnoredEntry(e.name)) continue;
+		if (m.matchesGlob(rel)) continue;
+
 		if (e.isDirectory()) {
-			out.push(...walk(cwd, rel));
+			out.push(...walk(cwd, rel, m));
 		} else if (e.isFile()) {
 			try {
 				const s = statSync(join(cwd, rel));

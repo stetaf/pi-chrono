@@ -158,3 +158,12 @@ export interface ContentDiffEntry {
 	removedLines: number;
 	diffText: string;
 }
+
+export interface IgnoreRule {
+	kind: "name" | "suffix" | "glob";
+	value: string;
+}
+
+export interface ChronoIgnoreOptions {
+	rootDir: string;
+}
