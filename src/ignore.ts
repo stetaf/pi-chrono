@@ -100,6 +100,14 @@ export class IgnoreMatcher {
 		this.globRegexes = globRegexes;
 	}
 
+	matchesGlob(relativePath: string): boolean {
+		if (!this.globRegexes.length) return false;
+		for (const re of this.globRegexes) {
+			if (re.test(relativePath)) return true;
+		}
+		return false;
+	}
+
 	isIgnoredDir(dirName: string): boolean {
 		return this.nameSet.has(dirName);
 	}
@@ -109,14 +117,6 @@ export class IgnoreMatcher {
 		const lower = fileName.toLowerCase();
 		for (const suf of this.suffixes) {
 			if (lower.endsWith(suf)) return true;
-		}
-		return false;
-	}
-
-	matchesGlob(relativePath: string): boolean {
-		if (!this.globRegexes.length) return false;
-		for (const re of this.globRegexes) {
-			if (re.test(relativePath)) return true;
 		}
 		return false;
 	}

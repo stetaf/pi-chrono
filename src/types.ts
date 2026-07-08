@@ -1,3 +1,5 @@
+import type { IgnoreMatcher } from "./ignore";
+
 export interface ChronoCheckpoint {
 	entryId: string;
 	journalPath: string;
@@ -166,4 +168,9 @@ export interface IgnoreRule {
 
 export interface ChronoIgnoreOptions {
 	rootDir: string;
+}
+
+export interface WalkOptions {
+	prefix?: string;
+	matcher?: IgnoreMatcher;
 }

@@ -2,9 +2,10 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { buildIgnoreMatcher } from "./ignore.ts";
-import type { PreManifest, FileMeta, Journal, FsOp, FinalizeResult, PersistedState, SessionPaths } from "./types.ts";
+import type { PreManifest, FileMeta, Journal, FsOp, WalkEntry, FinalizeResult, PersistedState, SessionPaths } from "./types.ts";
 import { BLOBS_DIR, SESSIONS_DIR, sessionPaths, ensureDirs, ensureSessionDirs } from "./paths.ts";
-import { walk, ingestBlob, sha256OfFile } from "./fs-utils.ts";
+import { walk, ingestBlob, sha256OfFile, mapLimit } from "./fs-utils.ts";
+import { DEFAULT_HASH_CONCURRENCY, DEFAULT_STRICT_HASH } from "./config.ts";
 
 export async function capturePreManifest(
 	cwd: string,
@@ -14,50 +15,38 @@ export async function capturePreManifest(
 ): Promise<PreManifest> {
 	ensureDirs();
 	const matcher = buildIgnoreMatcher({ rootDir: cwd });
-	const walked = walk(cwd, "", matcher);
+	const walked = walk(cwd, { matcher });
 	const files: Record<string, FileMeta> = {};
 
-	await Promise.all(
-		walked.map(async (entry) => {
-			const prevMeta = prev?.files[entry.path];
-			if (
-				prevMeta &&
-				prevMeta.mtime === entry.mtime &&
-				prevMeta.size === entry.size &&
-				existsSync(join(BLOBS_DIR, prevMeta.sha256))
-			) {
-				files[entry.path] = prevMeta;
-				return;
-			}
-			try {
-				const sha = await ingestBlob(join(cwd, entry.path));
-				files[entry.path] = { mtime: entry.mtime, size: entry.size, sha256: sha };
-			} catch {
-				// File unreadable — skip
-			}
-		}),
-	);
+	await mapLimit(walked, DEFAULT_HASH_CONCURRENCY, async (entry) => {
+		const prevMeta = prev?.files[entry.path];
+		if (
+			prevMeta &&
+			prevMeta.mtime === entry.mtime &&
+			prevMeta.size === entry.size &&
+			existsSync(join(BLOBS_DIR, prevMeta.sha256))
+		) {
+			files[entry.path] = prevMeta;
+			return;
+		}
+		try {
+			const sha = await ingestBlob(join(cwd, entry.path));
+			files[entry.path] = { mtime: entry.mtime, size: entry.size, sha256: sha };
+		} catch {
+			// File unreadable — skip
+		}
+	});
 
 	return { entryId, userMessage, ts: Date.now(), files };
 }
 
 export async function buildJournal(cwd: string, pre: PreManifest): Promise<Journal | null> {
 	const matcher = buildIgnoreMatcher({ rootDir: cwd });
-	const post = walk(cwd, "", matcher);
+	const strictHash = DEFAULT_STRICT_HASH;
+
+	const post = walk(cwd, { matcher });
 	const postMap = new Map(post.map((f) => [f.path, f]));
 	const ops: FsOp[] = [];
-
-	const postSha = new Map<string, string>();
-	await Promise.all(
-		post.map(async (f) => {
-			try {
-				const sha = await sha256OfFile(join(cwd, f.path));
-				postSha.set(f.path, sha);
-			} catch {
-				// Skip unreadable files
-			}
-		}),
-	);
 
 	for (const [path, meta] of Object.entries(pre.files)) {
 		if (!postMap.has(path)) {
@@ -71,13 +60,31 @@ export async function buildJournal(cwd: string, pre: PreManifest): Promise<Journ
 		}
 	}
 
+	const candidates: WalkEntry[] = [];
 	for (const f of post) {
 		const before = pre.files[f.path];
-		if (before) {
-			const after = postSha.get(f.path);
-			if (after && after !== before.sha256) {
-				ops.push({ kind: "modified", path: f.path, beforeBlob: before.sha256 });
-			}
+		if (!before) continue;
+
+		if (!strictHash && before.mtime === f.mtime && before.size === f.size) {
+			continue;
+		}
+
+		candidates.push(f);
+	}
+
+	const postSha = new Map<string, string>();
+	await mapLimit(candidates, DEFAULT_HASH_CONCURRENCY, async (f) => {
+		try {
+			const sha = await sha256OfFile(join(cwd, f.path));
+			postSha.set(f.path, sha);
+		} catch { /* unreadable, skip */ }
+	});
+
+	for (const f of candidates) {
+		const before = pre.files[f.path];
+		const after = postSha.get(f.path);
+		if (after && after !== before.sha256) {
+			ops.push({ kind: "modified", path: f.path, beforeBlob: before.sha256 });
 		}
 	}
 
@@ -106,9 +113,7 @@ export async function finalizeJournal(
 				},
 				journal: existing,
 			};
-		} catch {
-			// Corrupt — fall through and rebuild
-		}
+		} catch { /* corrupted */ }
 	}
 
 	const journal = await buildJournal(cwd, pre);
