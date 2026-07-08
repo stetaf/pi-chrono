@@ -18,6 +18,7 @@ Perfect for when you want to undo AI-generated changes without losing your conve
 - **Blob storage**: Content-addressed blob store for before/after file versions
 - **Rollback preview**: Shows exactly which files will change before confirming
 - **Status monitoring**: `/chrono status` for health & storage diagnostics
+- **Rollback diff inspection**: `/chrono diff` to inspect rollback impact without restoring
 - **Garbage collection**: Automatically cleans up obsolete checkpoint data
 
 ## Installation
@@ -53,6 +54,7 @@ Use the `/chrono` command with an optional subcommand:
 ```
 /chrono            List and restore rollback points
 /chrono status     Show chrono health & storage state
+/chrono diff       Inspect file changes before rollback
 ```
 
 #### Rollback (`/chrono`)
@@ -73,6 +75,16 @@ Running `/chrono status` shows an overview of the chrono system:
 - Blob storage size
 - Pending pre-manifest status
 
+#### Diff (`/chrono diff`)
+
+Running `/chrono diff` lets you inspect a rollback target without forking the session or restoring files:
+
+- Select a rollback checkpoint using the same picker as `/chrono`
+- See affected file counts grouped by operation kind
+- See modified, recreated, and removed paths
+- Use `/chrono diff --full` to show all affected paths
+- Use `/chrono diff --content` to include compact text-level diffs for modified files
+
 ### What happens during rollback?
 
 When you roll back to a checkpoint:
@@ -81,6 +93,65 @@ When you roll back to a checkpoint:
 - ✅ The session is forked at the selected entry
 - ✅ You can continue working from that point forward
 - ⚠️ The action cannot be undone — create new checkpoints after rollback if needed
+
+## Configuration
+
+### Ignore system
+
+pi-chrono skips common non-essential directories and files when scanning the workspace. The ignore list covers multiple ecosystems:
+
+| Category          | Ignored paths                                                                                                                                                                              |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **JS / Node**     | `node_modules`, `.next`, `.nuxt`, `dist`, `build`, `.turbo`, `.parcel-cache`                                                                                                               |
+| **Python**        | `__pycache__`, `.venv`, `venv`, `.pytest_cache`, `.mypy_cache`, `.ruff_cache`, `.tox`                                                                                                      |
+| **PHP / Laravel** | `vendor`, `bootstrap/cache`, `storage/framework/cache/**`, `storage/framework/views/**`, `storage/logs/**`, `storage/framework/sessions/**`, `storage/framework/testing/**`                |
+| **Build / cache** | `target`, `out`, `.cache`, `coverage`, `.nyc_output`, `tmp`, `temp`, `.dart_tool`, `.gradle`, `.m2`, `Pods`, `.pub-cache`, `.svelte-kit`, `.astro`, `.output`, `.eggs`, `**/*.egg-info/**` |
+| **VCS**           | `.git`, `.svn`, `.hg`                                                                                                                                                                      |
+| **IDE / Editor**  | `.idea`, `.vscode`, `**/*.swp`                                                                                                                                                             |
+| **OS / Logs**     | `.DS_Store`, `Thumbs.db`, `*.log`, `*.tmp`, `*.temp`, `*.bak`, files ending with `~`                                                                                                       |
+
+### `.chronoignore`
+
+You can extend or override the default ignore rules by placing a `.chronoignore` file in your project root. The syntax is a gitignore-style subset:
+
+```gitignore
+*.log               # Ignore all .log files (anywhere)
+.env                # Ignore files/directories named .env
+custom/             # Ignore the custom/ directory entirely
+node_modules/local  # Ignore a specific nested path
+```
+
+Supported syntax:
+
+- **Empty lines** and **`#` comments** are ignored
+- **Trailing `/`** — directory-only ignore
+- **`path/with/slashes`** — matches relative to any ancestor
+- **`*.ext`** — suffix-based ignore anywhere in the tree
+- **Plain names** — directory or file name match
+
+Rules from `.chronoignore` are merged **after** the default preset, so they can extend but not negate built-in rules.
+
+### Environment variables
+
+| Variable                     | Default              | Description                                                          |
+| ---------------------------- | -------------------- | -------------------------------------------------------------------- |
+| `PI_CHRONO_HASH_CONCURRENCY` | `8`                  | Max concurrent file hashing operations                               |
+| `PI_CHRONO_MAX_FILE_SIZE`    | `104857600` (100 MB) | Files larger than this are skipped                                   |
+| `PI_CHRONO_STRICT_HASH`      | `false`              | When `true`, always compute full SHA256 even if `mtime`+`size` match |
+
+### Hashing tradeoff (`mtime` + `size` vs full SHA256)
+
+By default, pi-chrono uses an **optimistic caching** strategy:
+
+- When a file's `mtime` (modification time) and `size` are unchanged between turns, the file is considered **unchanged** and its previous SHA256 hash is reused.
+- Only files where `mtime` or `size` differ are re-hashed to detect content changes.
+
+**Why**: In normal AI turns, the vast majority of files are not touched — re-hashing every file after every turn would be wasteful.
+
+**Edge case**: On some filesystems, `mtime` resolution is limited (e.g., FAT32: 2 seconds, HFS+: 1 second). A file could be modified twice within the same clock tick, producing identical `mtime` + `size` but different content.
+
+- **Default (fast)**: Trust `mtime` + `size` — sufficient for virtually all real-world workflows on NTFS, APFS, ext4, etc.
+- **Strict mode**: Set `PI_CHRONO_STRICT_HASH=1` to always compute the full SHA256, eliminating the edge case at the cost of performance.
 
 ## Configuration
 
@@ -189,18 +260,19 @@ npm test
 
 ```
 src/
-├── index.ts            # Extension entry point, event handlers, command registration
-├── types.ts            # Data structures (Checkpoint, Journal, PreManifest, etc.)
+├── checkpoints.ts      # Checkpoint listing and user-message entry type guard
 ├── commands.ts         # Chrono command parsing (subcommands: status)
 ├── config.ts           # Centralized configuration (concurrency, file size, strict hash)
-├── ignore.ts           # Ignore system: IgnoreMatcher, default presets, .chronoignore parser
-├── journal.ts          # File operation tracking, reversal, and blob management
-├── paths.ts            # Directory constants, session path resolution
-├── state.ts            # Checkpoint and pending-pre persistence (load/save)
-├── fs-utils.ts         # File system walking, hashing (SHA256), blob ingestion, mapLimit
-├── status.ts           # Status report generation (checkpoint validity, disk stats)
-├── rollback-preview.ts # Rollback preview builder (operations, validation)
 ├── diff.ts             # Diff summary and content diff generation
+├── fs-utils.ts         # File system walking, hashing (SHA256), blob ingestion, mapLimit
+├── ignore.ts           # Ignore system: IgnoreMatcher, default presets, .chronoignore parser
+├── index.ts            # Extension entry point, event handlers, command registration
+├── journal.ts          # File operation tracking, reversal, and blob management
+├── paths.ts            # Directory constants, session path resolution, storage root setter
+├── rollback-preview.ts # Rollback preview builder (operations, validation)
+├── state.ts            # Checkpoint and pending-pre persistence (load/save)
+├── status.ts           # Status report generation (checkpoint validity, disk stats)
+├── types.ts            # Data structures (Checkpoint, Journal, PreManifest, etc.)
 test/
 └── smoke.ts           # Basic functionality tests
 ```

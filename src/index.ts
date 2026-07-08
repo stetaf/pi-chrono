@@ -32,6 +32,10 @@ import {
 	truncateText,
 	generateContentDiffs,
 } from "./diff.ts";
+import {
+	isUserMessageEntry,
+	listAvailableCheckpoints,
+} from "./checkpoints.ts";
 import type {
 	SessionPaths,
 	PreManifest,
@@ -46,13 +50,6 @@ function formatTime(ts: number): string {
 function truncate(text: string, max = 80): string {
 	if (text.length <= max) return text;
 	return text.slice(0, Math.max(0, max - 3)) + "...";
-}
-
-function isUserMessageEntry(entry: unknown): entry is { id: string; type: "message"; message: { role: "user" } } {
-	if (!entry || typeof entry !== "object") return false;
-	const record = entry as Record<string, unknown>;
-	const message = record.message as Record<string, unknown> | undefined;
-	return record.type === "message" && message?.role === "user" && typeof record.id === "string";
 }
 
 function latestUserEntry(ctx: ExtensionContext): { id: string; type: "message"; message: { role: "user" } } | null {
@@ -122,21 +119,6 @@ export default function chronoExtension(pi: ExtensionAPI): void {
 		}
 
 		return true;
-	}
-
-	function listAvailableCheckpoints(ctx: ExtensionContext): ChronoCheckpoint[] {
-		const branch = ctx.sessionManager.getBranch();
-		const branchIds = new Set(branch.map((e) => e.id));
-		const available: ChronoCheckpoint[] = [];
-
-		for (const cp of checkpoints.values()) {
-			const entry = ctx.sessionManager.getEntry(cp.entryId);
-			if (branchIds.has(cp.entryId) && existsSync(cp.journalPath) && isUserMessageEntry(entry)) {
-				available.push(cp);
-			}
-		}
-
-		return available.sort((a, b) => b.timestamp - a.timestamp);
 	}
 
 	pi.on("session_start", async (_event, ctx: ExtensionContext) => {
@@ -348,7 +330,11 @@ export default function chronoExtension(pi: ExtensionAPI): void {
 				if (!(await finalizePendingPre(ctx, p))) return;
 
 				const branch = ctx.sessionManager.getBranch();
-				const available = listAvailableCheckpoints(ctx);
+				const available = listAvailableCheckpoints(
+					checkpoints.values(),
+					branch,
+					(entryId) => ctx.sessionManager.getEntry(entryId),
+				);
 
 				if (available.length === 0) {
 					ctx.ui.notify("No rollback points available", "info");
@@ -411,7 +397,11 @@ export default function chronoExtension(pi: ExtensionAPI): void {
 			if (!(await finalizePendingPre(ctx, p))) return;
 
 			const branch = ctx.sessionManager.getBranch();
-			const available = listAvailableCheckpoints(ctx);
+			const available = listAvailableCheckpoints(
+				checkpoints.values(),
+				branch,
+				(entryId) => ctx.sessionManager.getEntry(entryId),
+			);
 
 			if (available.length === 0) {
 				ctx.ui.notify("No rollback points available", "info");

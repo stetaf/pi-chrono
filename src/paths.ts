@@ -5,10 +5,17 @@ import { join } from "node:path";
 import type { SessionPaths } from "./types.ts";
 import { MAX_FILE_SIZE } from "./config.ts";
 
-export const CHRONO_DIR = join(homedir(), ".pi", "chrono");
-export const SESSIONS_DIR = join(CHRONO_DIR, "sessions");
-export const BLOBS_DIR = join(CHRONO_DIR, "blobs");
+export const DEFAULT_CHRONO_DIR = join(homedir(), ".pi", "chrono");
+export let CHRONO_DIR = DEFAULT_CHRONO_DIR;
+export let SESSIONS_DIR = join(CHRONO_DIR, "sessions");
+export let BLOBS_DIR = join(CHRONO_DIR, "blobs");
 export { MAX_FILE_SIZE };
+
+export function setChronoStorageRoot(root: string): void {
+	CHRONO_DIR = root;
+	SESSIONS_DIR = join(CHRONO_DIR, "sessions");
+	BLOBS_DIR = join(CHRONO_DIR, "blobs");
+}
 
 export function ensureDirs(): void {
 	for (const d of [CHRONO_DIR, SESSIONS_DIR, BLOBS_DIR]) {

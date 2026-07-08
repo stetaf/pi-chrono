@@ -9,6 +9,7 @@ import {
 	ensureDirs,
 	ensureSessionDirs,
 	MAX_FILE_SIZE,
+	setChronoStorageRoot,
 } from "../src/paths.ts";
 import {
 	isIgnoredName,
@@ -804,6 +805,9 @@ async function test22_contentDiffDeduplicatesAndShowsTailDeletion(): Promise<voi
 }
 
 async function main(): Promise<void> {
+	const testChronoDir = mkdtempSync(join(tmpdir(), "pi-chrono-store-"));
+	setChronoStorageRoot(testChronoDir);
+
 	console.log("\x1b[1m\x1b[36mpi-chrono smoke test\x1b[0m");
 	console.log("\x1b[2m" + "=".repeat(50) + "\x1b[0m");
 	console.log(`CHRONO_DIR:   ${CHRONO_DIR}`);
@@ -848,6 +852,8 @@ async function main(): Promise<void> {
 	}
 
 	console.log("\n" + "=".repeat(50));
+	rmSync(testChronoDir, { recursive: true, force: true });
+
 	if (fail === 0) {
 		console.log(`\x1b[1m\x1b[32m✓ All ${pass} assertions passed\x1b[0m`);
 		process.exit(0);

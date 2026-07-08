@@ -8,6 +8,12 @@ export interface ChronoCheckpoint {
 	opCount: number;
 }
 
+export interface UserMessageEntry {
+	id: string;
+	type: "message";
+	message: { role: "user" };
+}
+
 export interface PersistedState {
 	checkpoints: ChronoCheckpoint[];
 }
