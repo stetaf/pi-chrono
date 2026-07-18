@@ -1,6 +1,6 @@
 {
     "name": "pi-chrono",
-    "version": "0.3.1",
+    "version": "0.3.2",
     "description": "Pi coding agent extension for session rollback. Rewind your conversation and restore file state",
     "license": "MIT",
     "author": "stetaf",
