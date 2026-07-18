@@ -4,7 +4,7 @@
 
 ## Overview
 
-pi-chrono is an extension for [Pi Coding Agent](https://github.com/earendil-works/pi-coding-agent) that enables time-travel-style session management. It automatically captures file states before each AI turn and lets you roll back to any previous checkpoint, restoring both the workspace and the session context.
+pi-chrono is an extension for [Pi Coding Agent](https://github.com/earendil-works/pi-coding-agent) that enables time-travel-style session management. It automatically captures file states before each agent run and lets you roll back to any previous checkpoint, restoring both the workspace and the session context.
 
 Perfect for when you want to undo AI-generated changes without losing your conversation history.
 
@@ -41,8 +41,8 @@ pi install github.com/stetaf/pi-chrono
 
 pi-chrono works automatically once installed:
 
-1. **Before each AI turn**: Captures current file state (metadata + content hashes)
-2. **After each turn**: Creates a journal entry tracking all file operations
+1. **Before each agent run**: Captures current file state (metadata + content hashes)
+2. **After the agent run settles**: Creates a journal entry tracking all file operations
 3. **On session start**: Loads existing checkpoints and garbage-collects old data
 
 No configuration required — it just works.
@@ -157,9 +157,9 @@ By default, pi-chrono uses an **optimistic caching** strategy:
 
 pi-chrono uses three core mechanisms:
 
-1. **Pre-manifests**: Captured before each AI turn, containing file metadata (path, mtime, size, SHA256)
+1. **Pre-manifests**: Captured before each agent run, containing file metadata (path, mtime, size, SHA256)
 
-2. **Journals**: Created after each turn, recording all filesystem operations:
+2. **Journals**: Created after the agent run settles, recording all filesystem operations:
     - `modified`: File changed (with before/after blob tracking)
     - `created`: New file added
     - `deleted`: File removed
@@ -224,7 +224,7 @@ test/
 - `session_start`: Initialize checkpoints and load state
 - `session_shutdown`: Finalize pending checkpoints
 - `before_agent_start`: Capture pre-manifest before AI turn
-- `turn_end`: Finalize journal after AI turn completes
+- `agent_settled`: Finalize journal after the complete agent run settles
 - `session_before_fork`: Handle rollback when forking session
 
 ### Commands registered

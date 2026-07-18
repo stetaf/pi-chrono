@@ -39,6 +39,7 @@ import {
 	formatDiffReport,
 	generateContentDiffs,
 } from "../src/diff.ts";
+import chronoExtension from "../src/index.ts";
 import type {
 	ChronoCheckpoint,
 	Journal,
@@ -804,6 +805,64 @@ async function test22_contentDiffDeduplicatesAndShowsTailDeletion(): Promise<voi
 	}
 }
 
+async function test23_agentSettledCapturesAllTurns(): Promise<void> {
+	section("23. agent lifecycle: settle after all turns");
+	const cwd = mkdtempSync(join(tmpdir(), "chrono-agent-settled-"));
+	const oldCwd = process.cwd();
+	const sessionId = "agent-settled-" + Date.now();
+	const p = sessionPaths(sessionId);
+	const handlers = new Map<string, (...args: any[]) => unknown>();
+
+	try {
+		writeFileSync(join(cwd, "a.txt"), "A before\n");
+		writeFileSync(join(cwd, "b.txt"), "B before\n");
+		process.chdir(cwd);
+
+		const userEntry = {
+			id: "user-entry-1",
+			type: "message",
+			message: { role: "user" },
+		};
+		const ctx = {
+			hasUI: false,
+			sessionManager: {
+				getSessionId: () => sessionId,
+				getBranch: () => [userEntry],
+				getEntry: (entryId: string) => entryId === userEntry.id ? userEntry : undefined,
+			},
+		};
+		const pi = {
+			on: (event: string, handler: (...args: any[]) => unknown) => handlers.set(event, handler),
+			appendEntry: () => undefined,
+			registerCommand: () => undefined,
+		};
+
+		chronoExtension(pi as any);
+		assert(!handlers.has("turn_end"), "turn_end does not finalize checkpoints");
+		assert(handlers.has("agent_settled"), "agent_settled finalizes checkpoints");
+
+		await handlers.get("session_start")!({}, ctx);
+		await handlers.get("before_agent_start")!({ prompt: "make both changes" }, ctx);
+		writeFileSync(join(cwd, "a.txt"), "A after first turn\n");
+		writeFileSync(join(cwd, "b.txt"), "B after second turn\n");
+		await handlers.get("agent_settled")!({}, ctx);
+
+		const journalPath = join(p.journalsDir, `${userEntry.id}.json`);
+		assert(existsSync(journalPath), "settled agent writes a journal");
+		if (existsSync(journalPath)) {
+			const journal = JSON.parse(readFileSync(journalPath, "utf8")) as Journal;
+			const modified = journal.ops
+				.filter((op) => op.kind === "modified")
+				.map((op) => op.path);
+			assert(modified.includes("a.txt") && modified.includes("b.txt"), "journal includes changes from all turns");
+		}
+	} finally {
+		process.chdir(oldCwd);
+		rmSync(cwd, { recursive: true, force: true });
+		rmSync(p.dir, { recursive: true, force: true });
+	}
+}
+
 async function main(): Promise<void> {
 	const testChronoDir = mkdtempSync(join(tmpdir(), "pi-chrono-store-"));
 	setChronoStorageRoot(testChronoDir);
@@ -840,6 +899,7 @@ async function main(): Promise<void> {
 		test20_diffSummaryReportsMissingBlobs,
 		test21_diffReportUsesRollbackEffectLabels,
 		test22_contentDiffDeduplicatesAndShowsTailDeletion,
+		test23_agentSettledCapturesAllTurns,
 	];
 
 	for (const t of tests) {

@@ -172,7 +172,7 @@ export default function chronoExtension(pi: ExtensionAPI): void {
 		}
 	});
 
-	pi.on("turn_end", async (_event, ctx: ExtensionContext) => {
+	pi.on("agent_settled", async (_event, ctx: ExtensionContext) => {
 		const p = paths(ctx);
 		if (!p || !pendingPre) return;
 		await finalizePendingPre(ctx, p);
